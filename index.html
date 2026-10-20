@@ -139,6 +139,7 @@ body {
 .card-wrap{perspective:900px;width:min(320px,85vw);height:min(400px,52vh)}
 .card-inner{
   width:100%;height:100%;position:relative;
+  -webkit-transform-style:preserve-3d;
   transform-style:preserve-3d;
   transition:transform .7s cubic-bezier(.4,0,.2,1);
 }
@@ -160,7 +161,9 @@ body {
 }
 
 .face{
-  position:absolute;inset:0;backface-visibility:hidden;
+  position:absolute;inset:0;
+  -webkit-backface-visibility:hidden;
+  backface-visibility:hidden;
   border-radius:var(--radius);display:flex;flex-direction:column;
   align-items:center;justify-content:center;padding:28px;text-align:center;
 }
@@ -577,8 +580,7 @@ function doPick(){
     requestAnimationFrame(()=>{
       const c2=document.getElementById('ci');
       if(c2)c2.classList.add('flipped');
-      playRandomSfx();
-      setTimeout(()=>speakName(pick),2000);
+      speakName(pick,()=>{ playRandomSfx(); });
       picking=false;
     });
   },4000);
@@ -773,9 +775,9 @@ function playConfirm(){
   });
 }
 
-function speakName(name){
+function speakName(name,onDone){
   try{
-    if(!('speechSynthesis' in window))return;
+    if(!('speechSynthesis' in window)){if(onDone)onDone();return}
     window.speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance('Pembaca hari ini adalah, '+name);
     u.lang='id-ID';
@@ -786,8 +788,13 @@ function speakName(name){
     const voices=window.speechSynthesis.getVoices();
     const idVoice=voices.find(v=>v.lang.startsWith('id'))||voices.find(v=>v.lang.startsWith('ms'))||null;
     if(idVoice)u.voice=idVoice;
+    if(onDone){u.onend=onDone;u.onerror=onDone;
+      // Fallback: if onend never fires (some browsers), play after 4s
+      setTimeout(()=>{if(!u._done){u._done=true;onDone()}},4000);
+      const origDone=onDone;u.onend=()=>{if(!u._done){u._done=true;origDone()}};u.onerror=()=>{if(!u._done){u._done=true;origDone()}}
+    }
     window.speechSynthesis.speak(u);
-  }catch(e){}
+  }catch(e){if(onDone)onDone()}
 }
 // Preload voices
 try{window.speechSynthesis.getVoices();window.speechSynthesis.onvoiceschanged=()=>window.speechSynthesis.getVoices()}catch(e){}
