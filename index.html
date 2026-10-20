@@ -141,7 +141,7 @@ body {
   width:100%;height:100%;position:relative;
   transition:transform .35s cubic-bezier(.4,0,.2,1);
 }
-.face-back{display:none}
+.card-inner .face-back{display:none}
 .card-inner.flipped .face-front{display:none}
 .card-inner.flipped .face-back{display:flex}
 .card-inner.shuffling{animation:shuffle .4s ease-in-out infinite}
@@ -627,7 +627,20 @@ function confirmPick(){
   state.currentPick=null;
   picking=false;
   save();
-  setTimeout(renderMain,800);
+  // Reverse 2D flip after confetti
+  const ci=document.getElementById('ci');
+  if(ci){
+    setTimeout(()=>{
+      ci.style.transform='scaleX(0)';
+      setTimeout(()=>{
+        ci.classList.remove('flipped');
+        ci.style.transform='scaleX(1)';
+        setTimeout(renderMain,400);
+      },400);
+    },600);
+  } else {
+    setTimeout(renderMain,800);
+  }
 }
 
 function absentPick(){
@@ -638,13 +651,22 @@ function absentPick(){
   state.currentPick=null;
   picking=false;
   save();
-  // Flip card back first
+  // Reverse 2D flip: scale to 0, swap face, scale back
   const ci=document.getElementById('ci');
-  if(ci)ci.classList.remove('flipped');
-  setTimeout(()=>{
+  if(ci){
+    ci.style.transform='scaleX(0)';
+    setTimeout(()=>{
+      ci.classList.remove('flipped');
+      ci.style.transform='scaleX(1)';
+      setTimeout(()=>{
+        renderMain();
+        setTimeout(()=>{doPick()},400);
+      },400);
+    },400);
+  } else {
     renderMain();
     setTimeout(()=>{doPick()},400);
-  },700);
+  }
 }
 
 // === HISTORY ===
