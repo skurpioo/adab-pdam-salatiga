@@ -135,24 +135,22 @@ body {
 /* === CARD STAGE === */
 .stage{padding:8px 0 16px;display:flex;flex-direction:column;align-items:center;gap:16px}
 
-/* Card flip */
-.card-wrap{perspective:900px;width:min(320px,85vw);height:min(400px,52vh)}
+/* Card flip — 2D scale approach (works on all mobile) */
+.card-wrap{width:min(320px,85vw);height:min(400px,52vh)}
 .card-inner{
   width:100%;height:100%;position:relative;
-  -webkit-transform-style:preserve-3d;
-  transform-style:preserve-3d;
-  transition:transform .7s cubic-bezier(.4,0,.2,1);
+  transition:transform .35s cubic-bezier(.4,0,.2,1);
 }
-.card-inner.flipped{transform:rotateY(180deg)}
-.card-inner.flipped .face-front{pointer-events:none}
-.card-inner:not(.flipped) .face-back{pointer-events:none}
-.card-inner.shuffling{animation:shuffle .5s ease-in-out infinite}
+.face-back{display:none}
+.card-inner.flipped .face-front{display:none}
+.card-inner.flipped .face-back{display:flex}
+.card-inner.shuffling{animation:shuffle .4s ease-in-out infinite}
 @keyframes shuffle{
-  0%{transform:rotateY(0) scale(1)}
-  25%{transform:rotateY(90deg) scale(.93)}
-  50%{transform:rotateY(180deg) scale(.88)}
-  75%{transform:rotateY(270deg) scale(.93)}
-  100%{transform:rotateY(360deg) scale(1)}
+  0%{transform:scale(1) rotate(0deg)}
+  25%{transform:scale(.95) rotate(-3deg)}
+  50%{transform:scale(1) rotate(0deg)}
+  75%{transform:scale(.95) rotate(3deg)}
+  100%{transform:scale(1) rotate(0deg)}
 }
 .face-front .shuffle-name{
   font-family:var(--font-display);font-size:1.1rem;
@@ -162,8 +160,6 @@ body {
 
 .face{
   position:absolute;inset:0;
-  -webkit-backface-visibility:hidden;
-  backface-visibility:hidden;
   border-radius:var(--radius);display:flex;flex-direction:column;
   align-items:center;justify-content:center;padding:28px;text-align:center;
 }
@@ -192,7 +188,7 @@ body {
 
 /* Back: result */
 .face-back{
-  transform:rotateY(180deg);background:var(--card);
+  background:var(--card);
   box-shadow:0 12px 40px rgba(0,0,0,.1);
   border:3px solid var(--sage);
 }
@@ -559,6 +555,25 @@ function doPick(){
   picking=true;
   const pick=pool[Math.floor(Math.random()*pool.length)];
   state.currentPick=pick;save();
+
+  // Pre-unlock audio on user gesture (iOS requirement)
+  const ctx=getCtx();
+  if(ctx&&ctx.state==='suspended')ctx.resume();
+  // Pre-unlock TTS with silent utterance
+  try{const su=new SpeechSynthesisUtterance('');su.volume=0;window.speechSynthesis.speak(su)}catch(e){}
+  // Pre-load random SFX via Web Audio API
+  let sfxIdx;
+  do{sfxIdx=Math.floor(Math.random()*SFX_TOTAL)+1}while(sfxIdx===lastSfxIdx&&SFX_TOTAL>1);
+  lastSfxIdx=sfxIdx;
+  let sfxBuffer=null;
+  if(ctx){
+    fetch('sfx/sfx-'+String(sfxIdx).padStart(2,'0')+'.mp3')
+      .then(r=>r.arrayBuffer())
+      .then(buf=>ctx.decodeAudioData(buf))
+      .then(decoded=>{sfxBuffer=decoded})
+      .catch(()=>{});
+  }
+
   const c=document.getElementById('ci');
   playShuffle();
   c.classList.add('shuffling');
@@ -576,13 +591,30 @@ function doPick(){
   setTimeout(()=>{
     clearInterval(nameInterval);
     c.classList.remove('shuffling');
-    renderMain();
-    requestAnimationFrame(()=>{
-      const c2=document.getElementById('ci');
-      if(c2)c2.classList.add('flipped');
-      speakName(pick,()=>{ playRandomSfx(); });
+    // Fill back face with result
+    const backFace=c.querySelector('.face-back');
+    if(backFace){
+      backFace.innerHTML=
+        '<div class="result-badge">Terpilih</div>'+
+        '<div class="result-name">'+pick+'</div>'+
+        '<div class="confirm-row">'+
+        '<button class="btn btn-green" onclick="confirmPick()">✓ Hadir</button>'+
+        '<button class="btn btn-orange" onclick="absentPick()">✗ Tidak Hadir</button>'+
+        '</div>';
+    }
+    // 2D flip: scale to 0, swap faces, scale back
+    c.style.transform='scaleX(0)';
+    setTimeout(()=>{
+      c.classList.add('flipped');
+      c.style.transform='scaleX(1)';
+      // Speak name, then play SFX after speech
+      speakName(pick,()=>{
+        if(sfxBuffer&&ctx){
+          try{const src=ctx.createBufferSource();src.buffer=sfxBuffer;src.connect(ctx.destination);src.start(0)}catch(e){playReveal()}
+        }else{playReveal()}
+      });
       picking=false;
-    });
+    },400);
   },4000);
 }
 
@@ -784,14 +816,15 @@ function speakName(name,onDone){
     u.rate=0.9;
     u.pitch=1.05;
     u.volume=1;
-    // Try to pick Indonesian voice
     const voices=window.speechSynthesis.getVoices();
     const idVoice=voices.find(v=>v.lang.startsWith('id'))||voices.find(v=>v.lang.startsWith('ms'))||null;
     if(idVoice)u.voice=idVoice;
-    if(onDone){u.onend=onDone;u.onerror=onDone;
-      // Fallback: if onend never fires (some browsers), play after 4s
-      setTimeout(()=>{if(!u._done){u._done=true;onDone()}},4000);
-      const origDone=onDone;u.onend=()=>{if(!u._done){u._done=true;origDone()}};u.onerror=()=>{if(!u._done){u._done=true;origDone()}}
+    if(onDone){
+      let fired=false;
+      const done=()=>{if(!fired){fired=true;onDone()}};
+      u.onend=done;
+      u.onerror=done;
+      setTimeout(done,4000);
     }
     window.speechSynthesis.speak(u);
   }catch(e){if(onDone)onDone()}
@@ -819,18 +852,25 @@ function launchConfetti(){
   setTimeout(()=>wrap.remove(),5000);
 }
 
-// === RANDOM SFX (45 MP3 files) ===
+// === RANDOM SFX (45 MP3 files via Web Audio API for iOS) ===
 const SFX_TOTAL=45;
 let lastSfxIdx=-1;
 function playRandomSfx(){
   let idx;
   do{idx=Math.floor(Math.random()*SFX_TOTAL)+1}while(idx===lastSfxIdx&&SFX_TOTAL>1);
   lastSfxIdx=idx;
-  try{
-    const a=new Audio('sfx/sfx-'+String(idx).padStart(2,'0')+'.mp3');
-    a.volume=1;
-    a.play().catch(()=>{playReveal()});
-  }catch(e){playReveal()}
+  const ctx=getCtx();
+  if(!ctx){playReveal();return}
+  fetch('sfx/sfx-'+String(idx).padStart(2,'0')+'.mp3')
+    .then(r=>r.arrayBuffer())
+    .then(buf=>ctx.decodeAudioData(buf))
+    .then(decoded=>{
+      const src=ctx.createBufferSource();
+      src.buffer=decoded;
+      src.connect(ctx.destination);
+      src.start(0);
+    })
+    .catch(()=>{playReveal()});
 }
 
 function clearTestHistory(){
